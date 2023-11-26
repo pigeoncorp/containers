@@ -54,8 +54,8 @@ jobs:
       name: Docker login
       uses: hashibuto/github-actions/docker-login@docker-login_v0
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+        password: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
         registry: ${{ env.REGISTRY }}
 
     - name: Publish dev tag
