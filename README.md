@@ -1,2 +1,2 @@
 # containers
-collection of generic docker containers
+generic containers

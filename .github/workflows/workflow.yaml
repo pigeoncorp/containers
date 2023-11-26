@@ -1,0 +1,107 @@
+name: execute integration tasks
+
+on:
+  push:
+    branches:
+    - "**"
+
+jobs:
+  evaluate-changed-items:
+    runs-on: ubuntu-22.04
+    name: Evaluate changed items
+    outputs:
+      directories: ${{ steps.check-changes.outputs.directories }}
+      names: ${{ steps.check-changes.outputs.names }}
+      is-merged: ${{ steps.check-changes.outputs.is-merged }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - id: check-changes
+      uses: hashibuto/github-actions/changes-check@changes-check_v0
+      with:
+        base-branch: master
+
+  execute-integration-tasks:
+    strategy:
+      matrix:
+        directory: ${{ fromJson(needs.evaluate-changed-items.outputs.directories) }}
+
+    name: Verify changes
+    if: needs.evaluate-changed-items.outputs.directories != '[]'
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    env:
+      REGISTRY: registry.gitlab.com/hashibuto/hashibuto
+    runs-on: ubuntu-22.04
+    needs: evaluate-changed-items
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - id: check-version
+      name: Check release version
+      uses: hashibuto/github-actions/version-check@test
+      with:
+        path-prefix: ${{ matrix.directory }}
+
+    - id: docker-login
+      name: Docker login
+      uses: hashibuto/github-actions/docker-login@docker-login_v0
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        registry: ${{ env.REGISTRY }}
+
+    - name: Publish dev tag
+      shell: bash
+      run: VERSION=${{ steps.check-version.outputs.dev-version }} make publish
+
+    - name: Publish release tag
+      if: ${{ needs.evaluate-changed-items.outputs.is-merged == 'true' }}
+      shell: bash
+      run: VERSION=${{ steps.check-version.outputs.version }} make publish
+
+    - name: Publish major release tag
+      if: ${{ needs.evaluate-changed-items.outputs.is-merged == 'true' }}
+      shell: bash
+      run: VERSION=${{ env.FQ_MAJOR_VERSION }} make publish
+
+    - id: tag-release-version
+      name: Tag release version
+      if: ${{ needs.evaluate-changed-items.outputs.is-merged == 'true' }}
+      uses: hashibuto/github-actions/version-check@version-check_v0
+      with:
+        path-prefix: ${{ matrix.directory }}
+        tag-prefix: ${{ matrix.directory }}_
+        create-release-tag: true
+        create-major-release-tag: false
+
+  branch-protection-funnel:
+    runs-on: ubuntu-22.04
+    name: Verify integration tasks
+    needs:
+    - execute-integration-tasks
+    - evaluate-changed-items
+    if: always()
+    steps:
+    - name: Integration tasks succeeded
+      if: ${{ !(contains(needs.*.result, 'failure')) }}
+      run: exit 0
+    - name: Integration tasks failed
+      if: ${{ contains(needs.*.result, 'failure') }}
+      run: exit 1
+    - name: Update compare tag
+      if: ${{ needs.evaluate-changed-items.outputs.is-merged == 'true' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.git.updateRef({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: "tags/base",
+            sha: "${{ github.sha }}",
+            force: true
+          })
